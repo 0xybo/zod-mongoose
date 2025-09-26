@@ -3,6 +3,7 @@ import type { ZodNumber, ZodObject, ZodRawShape, ZodString, ZodType, z } from "z
 
 import zmAssert from "./assertions/assertions.js";
 import type { zm } from "./mongoose.types.js";
+import { enhanceZodInstance } from "./extension.js";
 export * from "./extension.js";
 
 /**
@@ -86,8 +87,13 @@ function extractValidationFromChecks(checks: any[] | undefined): zm.EffectValida
   if (!checks || checks.length === 0) return null;
   
   for (const check of checks) {
-    if (check._def && check._def.type === 'custom' && check._def.__zm_validation) {
-      return check._def.__zm_validation;
+    // Check for validation metadata stored by our extension
+    if (check && check.def && check.def.__zm_validation) {
+      return check.def.__zm_validation;
+    }
+    // Also check for validation in the check itself
+    if (check && check.__zm_validation) {
+      return check.__zm_validation;
     }
   }
   
@@ -97,11 +103,14 @@ function extractValidationFromChecks(checks: any[] | undefined): zm.EffectValida
 function parseObject<T extends ZodRawShape>(obj: ZodObject<T>): zm._Schema<T> {
   const object: any = {};
   for (const [key, field] of Object.entries(obj.shape)) {
-    if (zmAssert.object(field as any)) {
-      object[key] = parseObject(field as any);
+    // Enhance each field instance
+    const enhancedField = enhanceZodInstance(field);
+    
+    if (zmAssert.object(enhancedField as any)) {
+      object[key] = parseObject(enhancedField as any);
     } else {
-      const f = parseField(field as any);
-      if (!f) throw new Error(`Unsupported field type: ${(field as any).constructor}`);
+      const f = parseField(enhancedField as any);
+      if (!f) throw new Error(`Unsupported field type: ${(enhancedField as any).constructor}`);
 
       object[key] = f;
     }
@@ -116,6 +125,9 @@ function parseField<T>(
   def?: zm.mDefault<T>,
   refinement?: zm.EffectValidator<T>,
 ): zm.mField | null {
+  // Enhance the field instance to ensure custom methods work
+  field = enhanceZodInstance(field);
+  
   if (zmAssert.objectId(field)) {
     const ref = (<any>field).__zm_ref;
     const refPath = (<any>field).__zm_refPath;
@@ -197,13 +209,18 @@ function parseField<T>(
   if (zmAssert.array(field)) {
     // Extract validation from the array element if it has checks
     let elementValidation = null;
-    if (field.element && field.element._def && field.element._def.checks) {
-      elementValidation = extractValidationFromChecks(field.element._def.checks);
+    const element = field.element;
+    
+    // Enhance the element to ensure it works with refinements
+    enhanceZodInstance(element);
+    
+    if (element && element._def && element._def.checks) {
+      elementValidation = extractValidationFromChecks(element._def.checks);
     }
     
     return parseArray(
       required,
-      field.element,
+      element,
       def as zm.mDefault<T extends Array<infer K> ? K[] : never>,
       elementValidation,
     );
@@ -244,8 +261,10 @@ function parseField<T>(
 
   if (zmAssert.pipe(field)) {
     // ZodPipe represents both preprocess and transform in zod v4
-    // We want to parse the output type (field._def.out)
-    return parseField((field._def as any).out, required, def, refinement);
+    // For Mongoose schemas, we want to parse the input type (field._def.in)
+    // since that's what gets stored in the database
+    const inputField = (field._def as any).in;
+    return parseField(inputField, required, def, refinement);
   }
 
   if (zmAssert.effect(field)) {

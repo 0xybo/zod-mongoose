@@ -1,2 +1,3 @@
-// This file imports the extension to ensure it's loaded when the library is imported
-import "./extension.js";
+// This file is for side effects that should run when the library is imported
+// Currently empty - user must call extendZod(z) explicitly
+export {};
