@@ -3,6 +3,7 @@ import type { ZodNumber, ZodObject, ZodRawShape, ZodString, ZodType, z } from "z
 
 import zmAssert from "./assertions/assertions.js";
 import type { zm } from "./mongoose.types.js";
+import { enhanceZodInstance } from "./extension.js";
 export * from "./extension.js";
 
 /**
@@ -82,12 +83,42 @@ export function zodSchemaRaw<T extends ZodRawShape>(schema: ZodObject<T>): zm._S
 
 // Helpers
 // Helper function to extract validation from zod v4 checks array
-function extractValidationFromChecks(checks: any[]): zm.EffectValidator<any> | null {
+function extractValidationFromChecks(checks: any[] | undefined): zm.EffectValidator<any> | null {
   if (!checks || checks.length === 0) return null;
   
   for (const check of checks) {
-    if (check._def && check._def.type === 'custom' && check._def.__zm_validation) {
-      return check._def.__zm_validation;
+    // Check for validation metadata stored by our extension
+    if (check && check.def && check.def.__zm_validation) {
+      return check.def.__zm_validation;
+    }
+    // Also check for validation in the check itself
+    if (check && check.__zm_validation) {
+      return check.__zm_validation;
+    }
+    
+    // In Zod v4, extract validation from custom checks
+    if (check && check.def && check.def.type === 'custom' && check.def.fn) {
+      let message: string | undefined = undefined;
+      
+      // Try to extract error message
+      if (typeof check.def.error === 'function') {
+        try {
+          // Call the error function to get the message
+          const errorResult = check.def.error();
+          if (typeof errorResult === 'string') {
+            message = errorResult;
+          } else if (errorResult && typeof errorResult.message === 'string') {
+            message = errorResult.message;
+          }
+        } catch (e) {
+          // Error function might need specific parameters, ignore errors
+        }
+      }
+      
+      return {
+        validator: check.def.fn,
+        message: message || 'Validation failed',
+      };
     }
   }
   
@@ -97,11 +128,14 @@ function extractValidationFromChecks(checks: any[]): zm.EffectValidator<any> | n
 function parseObject<T extends ZodRawShape>(obj: ZodObject<T>): zm._Schema<T> {
   const object: any = {};
   for (const [key, field] of Object.entries(obj.shape)) {
-    if (zmAssert.object(field)) {
-      object[key] = parseObject(field);
+    // Enhance each field instance
+    const enhancedField = enhanceZodInstance(field);
+    
+    if (zmAssert.object(enhancedField as any)) {
+      object[key] = parseObject(enhancedField as any);
     } else {
-      const f = parseField(field);
-      if (!f) throw new Error(`Unsupported field type: ${field.constructor}`);
+      const f = parseField(enhancedField as any);
+      if (!f) throw new Error(`Unsupported field type: ${(enhancedField as any).constructor}`);
 
       object[key] = f;
     }
@@ -111,11 +145,14 @@ function parseObject<T extends ZodRawShape>(obj: ZodObject<T>): zm._Schema<T> {
 }
 
 function parseField<T>(
-  field: ZodType<T>,
+  field: any, // Changed from ZodType<T> to any for Zod v4 compatibility
   required = true,
   def?: zm.mDefault<T>,
   refinement?: zm.EffectValidator<T>,
 ): zm.mField | null {
+  // Enhance the field instance to ensure custom methods work
+  field = enhanceZodInstance(field);
+  
   if (zmAssert.objectId(field)) {
     const ref = (<any>field).__zm_ref;
     const refPath = (<any>field).__zm_refPath;
@@ -197,13 +234,18 @@ function parseField<T>(
   if (zmAssert.array(field)) {
     // Extract validation from the array element if it has checks
     let elementValidation = null;
-    if (field.element && field.element._def && field.element._def.checks) {
-      elementValidation = extractValidationFromChecks(field.element._def.checks);
+    const element = field.element;
+    
+    // Enhance the element to ensure it works with refinements
+    enhanceZodInstance(element);
+    
+    if (element && element._def && element._def.checks) {
+      elementValidation = extractValidationFromChecks(element._def.checks);
     }
     
     return parseArray(
       required,
-      field.element,
+      element,
       def as zm.mDefault<T extends Array<infer K> ? K[] : never>,
       elementValidation,
     );
@@ -244,23 +286,40 @@ function parseField<T>(
 
   if (zmAssert.pipe(field)) {
     // ZodPipe represents both preprocess and transform in zod v4
-    // We want to parse the output type (field._def.out)
-    return parseField((field._def as any).out, required, def, refinement);
+    const pipeData = (field._def as any);
+    const inputType = pipeData.in;
+    const outputType = pipeData.out;
+    
+    // Determine if this is a preprocess or transform operation
+    // Preprocess: input is transform, output is the target type -> use output type
+    // Transform: input is the source type, output is transform -> use input type
+    const isPreprocess = inputType && inputType.type === 'transform' && outputType && outputType.type !== 'transform';
+    
+    if (isPreprocess) {
+      // For preprocess, use the output type (what gets stored in database)
+      return parseField(outputType, required, def, refinement);
+    } else {
+      // For transform, use the input type (what gets stored in database) 
+      return parseField(inputType, required, def, refinement);
+    }
   }
 
   if (zmAssert.effect(field)) {
-    const effect = field._def.effect;
-
+    // In Zod v4, ZodTransform is now represented as pipes with in/out properties
+    const def = field._def as any;
+    
     // Extract unique and sparse properties from the original field if it exists
-    const originalField = field._def.schema;
+    const originalField = def.in || def.schema;
     const unique = originalField && (originalField as any).__zm_unique || false;
     const sparse = originalField && (originalField as any).__zm_sparse || false;
 
-    if (effect.type === "refinement") {
-      const validation = (<any>effect).__zm_validation as zm.EffectValidator<T>;
+    // Handle refinement type (custom checks on the schema)
+    if (def.type === "string" || def.type === "number" || def.type === "date") {
+      // This is likely a refined primitive type
+      const validation = refinement; // Use the passed refinement
       
-      // Parse the inner type and then apply unique/sparse if needed
-      const parsed = parseField(originalField, required, def, validation);
+      // Parse the field as its base type and then apply unique/sparse if needed
+      const parsed = parseField(originalField || field, required, def, validation);
       if (parsed && typeof parsed === 'object' && 'type' in parsed) {
         (parsed as any).unique = unique;
         (parsed as any).sparse = sparse;
@@ -268,7 +327,8 @@ function parseField<T>(
       return parsed;
     }
 
-    if (effect.type === "preprocess" || effect.type === "transform") {
+    // Handle transformation cases
+    if (def.type === "pipe" || def.type === "transform") {
       const parsed = parseField(originalField, required, def, refinement);
       if (parsed && typeof parsed === 'object' && 'type' in parsed) {
         (parsed as any).unique = unique;
@@ -389,7 +449,7 @@ function parseObjectId(
 function parseArray<T>(
   // biome-ignore lint/style/useDefaultParameterLast: Should be consistent with other functions
   required = true,
-  element: ZodType<T>,
+  element: any, // Changed from ZodType<T> to any for Zod v4 compatibility
   def?: zm.mDefault<T[]>,
   elementValidation?: zm.EffectValidator<T> | null,
 ): zm.mArray<T> {
@@ -405,7 +465,7 @@ function parseArray<T>(
 function parseMap<T, K>(
   // biome-ignore lint/style/useDefaultParameterLast: Consistency with other functions
   required = true,
-  valueType: ZodType<K>,
+  valueType: any, // Changed from ZodType<K> to any for Zod v4 compatibility
   def?: zm.mDefault<Map<NoInfer<T>, K>>,
 ): zm.mMap<T, K> {
   const pointer = parseField(valueType);

@@ -1,5 +1,5 @@
 import { Types, isValidObjectId } from "mongoose";
-import { type CustomErrorParams, z } from "zod";
+import { z } from "zod";
 
 declare module "zod" {
   interface ZodString {
@@ -21,14 +21,6 @@ declare module "zod" {
     sparse: (arg?: boolean) => ZodDate;
     __zm_unique: boolean;
     __zm_sparse: boolean;
-  }
-
-  interface ZodType<
-    Output = any,
-    Def extends z.ZodTypeDef = z.ZodTypeDef,
-    Input = Output,
-  > {
-    // For future use
   }
 }
 
@@ -63,57 +55,21 @@ export function extendZod(z_0: typeof z) {
   if (zod_extended) return;
   zod_extended = true;
 
-  // Refine support - zod v4 stores refinements in checks array
-  const _refine = z_0.ZodType.prototype.refine;
-  z_0.ZodType.prototype.refine = function <T>(
-    check: (arg0: T) => boolean,
-    opts?: string | CustomErrorParams | ((arg: T) => CustomErrorParams),
-  ) {
-    const refined = _refine.bind(this)(check, opts);
-
-    let message: string | undefined | ((v: T) => string | undefined) = undefined;
-    if (opts) {
-      if (typeof opts === "string") message = opts;
-      else if ("message" in opts) message = opts.message;
-    }
-
-    // Preserve custom properties from the original schema
-    const originalUnique = (this as any).__zm_unique;
-    const originalSparse = (this as any).__zm_sparse;
-    
-    if (originalUnique !== undefined) {
-      (refined as any).__zm_unique = originalUnique;
-    }
-    if (originalSparse !== undefined) {
-      (refined as any).__zm_sparse = originalSparse;
-    }
-
-    // Store validation metadata in the refinement check for zod v4
-    const checks = (refined._def as any).checks;
-    if (checks && checks.length > 0) {
-      const lastCheck = checks[checks.length - 1];
-      if (lastCheck && lastCheck._def && lastCheck._def.type === 'custom') {
-        (lastCheck._def as any).__zm_validation = {
-          validator: check,
-          message: message,
-        };
-      }
-    }
-
-    return refined;
-  };
-
-  // Unique support
+  // Unique support - Add unique() and sparse() methods to specific types
   const UNIQUE_SUPPORT_LIST = [z_0.ZodString, z_0.ZodNumber, z_0.ZodDate] as const;
 
   for (const type of UNIQUE_SUPPORT_LIST) {
     (<any>type.prototype).unique = function (arg = true) {
       (<any>this).__zm_unique = arg;
+      // Enhance this instance to ensure refine preserves unique properties
+      enhanceZodInstance(this);
       return this;
     };
 
     (<any>type.prototype).sparse = function (arg = true) {
       (<any>this).__zm_sparse = arg;
+      // Enhance this instance to ensure refine preserves sparse properties
+      enhanceZodInstance(this);
       return this;
     };
   }
@@ -141,6 +97,61 @@ export function extendZod(z_0: typeof z) {
   for (const [key, value] of Object.entries(TypesMap)) {
     (<any>value.prototype).__zm_type = key;
   }
+}
+
+/**
+ * Enhance a Zod instance with custom validation extraction capabilities
+ * This is called from the parsing logic to ensure instances work correctly
+ */
+export function enhanceZodInstance(instance: any) {
+  if (!instance || typeof instance !== 'object') return instance;
+  
+  // Check if this instance has already been enhanced
+  if (instance.__zm_enhanced) return instance;
+  instance.__zm_enhanced = true;
+
+  // Store original refine method if it exists
+  if (typeof instance.refine === 'function') {
+    const originalRefine = instance.refine;
+    
+    // Override refine method to preserve custom properties
+    instance.refine = function(check: any, opts?: any) {
+      const refined = originalRefine.call(this, check, opts);
+      
+      let message: string | undefined = undefined;
+      if (opts) {
+        if (typeof opts === "string") message = opts;
+        else if (typeof opts === "object" && "message" in opts) message = opts.message;
+      }
+
+      // Preserve custom properties from the original schema
+      const originalUnique = this.__zm_unique;
+      const originalSparse = this.__zm_sparse;
+      
+      if (originalUnique !== undefined) {
+        refined.__zm_unique = originalUnique;
+      }
+      if (originalSparse !== undefined) {
+        refined.__zm_sparse = originalSparse;
+      }
+
+      // Store validation metadata in the refinement check for zod v4
+      const checks = refined._def?.checks;
+      if (checks && checks.length > 0) {
+        const lastCheck = checks[checks.length - 1];
+        if (lastCheck && lastCheck.def && lastCheck.def.type === 'custom') {
+          lastCheck.def.__zm_validation = {
+            validator: check,
+            message: message,
+          };
+        }
+      }
+
+      return enhanceZodInstance(refined); // Recursively enhance refined instances
+    };
+  }
+
+  return instance;
 }
 
 export type TzmId = ReturnType<typeof createId> & {
