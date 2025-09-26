@@ -82,7 +82,7 @@ export function zodSchemaRaw<T extends ZodRawShape>(schema: ZodObject<T>): zm._S
 
 // Helpers
 // Helper function to extract validation from zod v4 checks array
-function extractValidationFromChecks(checks: any[]): zm.EffectValidator<any> | null {
+function extractValidationFromChecks(checks: any[] | undefined): zm.EffectValidator<any> | null {
   if (!checks || checks.length === 0) return null;
   
   for (const check of checks) {
@@ -97,11 +97,11 @@ function extractValidationFromChecks(checks: any[]): zm.EffectValidator<any> | n
 function parseObject<T extends ZodRawShape>(obj: ZodObject<T>): zm._Schema<T> {
   const object: any = {};
   for (const [key, field] of Object.entries(obj.shape)) {
-    if (zmAssert.object(field)) {
-      object[key] = parseObject(field);
+    if (zmAssert.object(field as any)) {
+      object[key] = parseObject(field as any);
     } else {
-      const f = parseField(field);
-      if (!f) throw new Error(`Unsupported field type: ${field.constructor}`);
+      const f = parseField(field as any);
+      if (!f) throw new Error(`Unsupported field type: ${(field as any).constructor}`);
 
       object[key] = f;
     }
@@ -111,7 +111,7 @@ function parseObject<T extends ZodRawShape>(obj: ZodObject<T>): zm._Schema<T> {
 }
 
 function parseField<T>(
-  field: ZodType<T>,
+  field: any, // Changed from ZodType<T> to any for Zod v4 compatibility
   required = true,
   def?: zm.mDefault<T>,
   refinement?: zm.EffectValidator<T>,
@@ -249,18 +249,21 @@ function parseField<T>(
   }
 
   if (zmAssert.effect(field)) {
-    const effect = field._def.effect;
-
+    // In Zod v4, ZodTransform is now represented as pipes with in/out properties
+    const def = field._def as any;
+    
     // Extract unique and sparse properties from the original field if it exists
-    const originalField = field._def.schema;
+    const originalField = def.in || def.schema;
     const unique = originalField && (originalField as any).__zm_unique || false;
     const sparse = originalField && (originalField as any).__zm_sparse || false;
 
-    if (effect.type === "refinement") {
-      const validation = (<any>effect).__zm_validation as zm.EffectValidator<T>;
+    // Handle refinement type (custom checks on the schema)
+    if (def.type === "string" || def.type === "number" || def.type === "date") {
+      // This is likely a refined primitive type
+      const validation = refinement; // Use the passed refinement
       
-      // Parse the inner type and then apply unique/sparse if needed
-      const parsed = parseField(originalField, required, def, validation);
+      // Parse the field as its base type and then apply unique/sparse if needed
+      const parsed = parseField(originalField || field, required, def, validation);
       if (parsed && typeof parsed === 'object' && 'type' in parsed) {
         (parsed as any).unique = unique;
         (parsed as any).sparse = sparse;
@@ -268,7 +271,8 @@ function parseField<T>(
       return parsed;
     }
 
-    if (effect.type === "preprocess" || effect.type === "transform") {
+    // Handle transformation cases
+    if (def.type === "pipe" || def.type === "transform") {
       const parsed = parseField(originalField, required, def, refinement);
       if (parsed && typeof parsed === 'object' && 'type' in parsed) {
         (parsed as any).unique = unique;
@@ -389,7 +393,7 @@ function parseObjectId(
 function parseArray<T>(
   // biome-ignore lint/style/useDefaultParameterLast: Should be consistent with other functions
   required = true,
-  element: ZodType<T>,
+  element: any, // Changed from ZodType<T> to any for Zod v4 compatibility
   def?: zm.mDefault<T[]>,
   elementValidation?: zm.EffectValidator<T> | null,
 ): zm.mArray<T> {
@@ -405,7 +409,7 @@ function parseArray<T>(
 function parseMap<T, K>(
   // biome-ignore lint/style/useDefaultParameterLast: Consistency with other functions
   required = true,
-  valueType: ZodType<K>,
+  valueType: any, // Changed from ZodType<K> to any for Zod v4 compatibility
   def?: zm.mDefault<Map<NoInfer<T>, K>>,
 ): zm.mMap<T, K> {
   const pointer = parseField(valueType);

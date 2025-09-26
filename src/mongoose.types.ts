@@ -4,7 +4,7 @@ import type { ZodType, z } from "zod";
 export namespace zm {
   export interface zID
     extends z.ZodUnion<
-      [z.ZodString, z.ZodType<Types.ObjectId, z.ZodTypeDef, Types.ObjectId>]
+      [z.ZodString, z.ZodType<Types.ObjectId>]
     > {
     __zm_type: "ObjectId";
     __zm_ref?: string;
@@ -17,7 +17,7 @@ export namespace zm {
   }
 
   export interface zUUID
-    extends z.ZodUnion<[z.ZodString, z.ZodType<Types.UUID, z.ZodTypeDef, Types.UUID>]> {
+    extends z.ZodUnion<[z.ZodString, z.ZodType<Types.UUID>]> {
     __zm_type: "UUID";
     __zm_ref?: string;
     __zm_refPath?: string;
