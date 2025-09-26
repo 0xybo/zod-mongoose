@@ -55,68 +55,21 @@ export function extendZod(z_0: typeof z) {
   if (zod_extended) return;
   zod_extended = true;
 
-  // Override refine method on all ZodType instances to preserve custom properties
-  // and store validation metadata
-  const originalRefineDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, 'refine');
-  if (!originalRefineDescriptor) {
-    // Add a prototype-level refine override that works for all instances
-    Object.defineProperty(Object.prototype, '__zm_originalRefine', {
-      value: null,
-      writable: true,
-      configurable: true
-    });
-  }
-
   // Unique support - Add unique() and sparse() methods to specific types
   const UNIQUE_SUPPORT_LIST = [z_0.ZodString, z_0.ZodNumber, z_0.ZodDate] as const;
 
   for (const type of UNIQUE_SUPPORT_LIST) {
-    // Store original refine method for this type
-    const originalRefine = type.prototype.refine;
-    
-    // Override refine to preserve properties and store validation metadata
-    type.prototype.refine = function(check: any, opts?: any) {
-      const refined = originalRefine.call(this, check, opts);
-      
-      let message: string | undefined = undefined;
-      if (opts) {
-        if (typeof opts === "string") message = opts;
-        else if (typeof opts === "object" && "message" in opts) message = opts.message;
-      }
-
-      // Preserve custom properties
-      const originalUnique = this.__zm_unique;
-      const originalSparse = this.__zm_sparse;
-      
-      if (originalUnique !== undefined) {
-        refined.__zm_unique = originalUnique;
-      }
-      if (originalSparse !== undefined) {
-        refined.__zm_sparse = originalSparse;
-      }
-
-      // Store validation metadata in the refinement check for zod v4
-      const checks = refined._def?.checks;
-      if (checks && checks.length > 0) {
-        const lastCheck = checks[checks.length - 1];
-        if (lastCheck && lastCheck.def && lastCheck.def.type === 'custom') {
-          lastCheck.def.__zm_validation = {
-            validator: check,
-            message: message,
-          };
-        }
-      }
-
-      return refined;
-    };
-
     (<any>type.prototype).unique = function (arg = true) {
       (<any>this).__zm_unique = arg;
+      // Enhance this instance to ensure refine preserves unique properties
+      enhanceZodInstance(this);
       return this;
     };
 
     (<any>type.prototype).sparse = function (arg = true) {
       (<any>this).__zm_sparse = arg;
+      // Enhance this instance to ensure refine preserves sparse properties
+      enhanceZodInstance(this);
       return this;
     };
   }

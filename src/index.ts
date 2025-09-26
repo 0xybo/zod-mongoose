@@ -95,6 +95,31 @@ function extractValidationFromChecks(checks: any[] | undefined): zm.EffectValida
     if (check && check.__zm_validation) {
       return check.__zm_validation;
     }
+    
+    // In Zod v4, extract validation from custom checks
+    if (check && check.def && check.def.type === 'custom' && check.def.fn) {
+      let message: string | undefined = undefined;
+      
+      // Try to extract error message
+      if (typeof check.def.error === 'function') {
+        try {
+          // Call the error function to get the message
+          const errorResult = check.def.error();
+          if (typeof errorResult === 'string') {
+            message = errorResult;
+          } else if (errorResult && typeof errorResult.message === 'string') {
+            message = errorResult.message;
+          }
+        } catch (e) {
+          // Error function might need specific parameters, ignore errors
+        }
+      }
+      
+      return {
+        validator: check.def.fn,
+        message: message || 'Validation failed',
+      };
+    }
   }
   
   return null;
@@ -261,10 +286,22 @@ function parseField<T>(
 
   if (zmAssert.pipe(field)) {
     // ZodPipe represents both preprocess and transform in zod v4
-    // For Mongoose schemas, we want to parse the input type (field._def.in)
-    // since that's what gets stored in the database
-    const inputField = (field._def as any).in;
-    return parseField(inputField, required, def, refinement);
+    const pipeData = (field._def as any);
+    const inputType = pipeData.in;
+    const outputType = pipeData.out;
+    
+    // Determine if this is a preprocess or transform operation
+    // Preprocess: input is transform, output is the target type -> use output type
+    // Transform: input is the source type, output is transform -> use input type
+    const isPreprocess = inputType && inputType.type === 'transform' && outputType && outputType.type !== 'transform';
+    
+    if (isPreprocess) {
+      // For preprocess, use the output type (what gets stored in database)
+      return parseField(outputType, required, def, refinement);
+    } else {
+      // For transform, use the input type (what gets stored in database) 
+      return parseField(inputType, required, def, refinement);
+    }
   }
 
   if (zmAssert.effect(field)) {
