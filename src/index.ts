@@ -81,6 +81,19 @@ export function zodSchemaRaw<T extends ZodRawShape>(schema: ZodObject<T>): zm._S
 }
 
 // Helpers
+// Helper function to extract validation from zod v4 checks array
+function extractValidationFromChecks(checks: any[]): zm.EffectValidator<any> | null {
+  if (!checks || checks.length === 0) return null;
+  
+  for (const check of checks) {
+    if (check._def && check._def.type === 'custom' && check._def.__zm_validation) {
+      return check._def.__zm_validation;
+    }
+  }
+  
+  return null;
+}
+
 function parseObject<T extends ZodRawShape>(obj: ZodObject<T>): zm._Schema<T> {
   const object: any = {};
   for (const [key, field] of Object.entries(obj.shape)) {
@@ -126,12 +139,16 @@ function parseField<T>(
   if (zmAssert.number(field)) {
     const isUnique = field.__zm_unique ?? false;
     const isSparse = field.__zm_sparse ?? false;
+    
+    // Extract refinement validation from checks in zod v4
+    const validation = extractValidationFromChecks(field._def.checks);
+    
     return parseNumber(
       field,
       required,
       def as zm.mDefault<number>,
       isUnique,
-      refinement as zm.EffectValidator<number>,
+      validation || (refinement as zm.EffectValidator<number>),
       isSparse,
     );
   }
@@ -139,12 +156,16 @@ function parseField<T>(
   if (zmAssert.string(field)) {
     const isUnique = field.__zm_unique ?? false;
     const isSparse = field.__zm_sparse ?? false;
+    
+    // Extract refinement validation from checks in zod v4
+    const validation = extractValidationFromChecks(field._def.checks);
+    
     return parseString(
       field,
       required,
       def as zm.mDefault<string>,
       isUnique,
-      refinement as zm.EffectValidator<string>,
+      validation || (refinement as zm.EffectValidator<string>),
       isSparse,
     );
   }
@@ -160,20 +181,31 @@ function parseField<T>(
   if (zmAssert.date(field)) {
     const isUnique = field.__zm_unique ?? false;
     const isSparse = field.__zm_sparse ?? false;
+    
+    // Extract refinement validation from checks in zod v4
+    const validation = extractValidationFromChecks(field._def.checks);
+    
     return parseDate(
       required,
       def as zm.mDefault<Date>,
-      refinement as zm.EffectValidator<Date>,
+      validation || (refinement as zm.EffectValidator<Date>),
       isUnique,
       isSparse,
     );
   }
 
   if (zmAssert.array(field)) {
+    // Extract validation from the array element if it has checks
+    let elementValidation = null;
+    if (field.element && field.element._def && field.element._def.checks) {
+      elementValidation = extractValidationFromChecks(field.element._def.checks);
+    }
+    
     return parseArray(
       required,
       field.element,
       def as zm.mDefault<T extends Array<infer K> ? K[] : never>,
+      elementValidation,
     );
   }
 
@@ -359,8 +391,9 @@ function parseArray<T>(
   required = true,
   element: ZodType<T>,
   def?: zm.mDefault<T[]>,
+  elementValidation?: zm.EffectValidator<T> | null,
 ): zm.mArray<T> {
-  const innerType = parseField(element);
+  const innerType = parseField(element, true, undefined, elementValidation || undefined);
   if (!innerType) throw new Error("Unsupported array type");
   return {
     type: [innerType as zm._Field<T>],
