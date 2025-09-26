@@ -150,7 +150,7 @@ function parseField<T>(
   }
 
   if (zmAssert.enumerable(field)) {
-    return parseEnum(Object.keys(field.Values), required, def as zm.mDefault<string>);
+    return parseEnum((field as any).options, required, def as zm.mDefault<string>);
   }
 
   if (zmAssert.boolean(field)) {
@@ -202,15 +202,11 @@ function parseField<T>(
   }
 
   if (zmAssert.mapOrRecord(field)) {
+    const mapField = field as any;
     return parseMap(
       required,
-      field.valueSchema,
-      def as zm.mDefault<
-        Map<
-          zm.UnwrapZodType<typeof field.keySchema>,
-          zm.UnwrapZodType<typeof field.valueSchema>
-        >
-      >,
+      mapField.valueType,
+      def as zm.mDefault<Map<any, any>>,
     );
   }
 

@@ -116,7 +116,7 @@ export function extendZod(z_0: typeof z) {
     Any: z_0.ZodAny,
     Map: z_0.ZodMap,
     Record: z_0.ZodRecord,
-    Effects: z_0.ZodEffects,
+    Effects: z_0.ZodTransform,
   };
 
   for (const [key, value] of Object.entries(TypesMap)) {

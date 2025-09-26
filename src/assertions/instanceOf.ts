@@ -4,7 +4,7 @@ import {
   ZodBoolean,
   ZodDate,
   ZodDefault,
-  ZodEffects,
+  ZodTransform,
   ZodEnum,
   ZodMap,
   ZodNullable,
@@ -78,7 +78,7 @@ export const zmAssert: IAsserts = {
     return f instanceof ZodMap || f instanceof ZodRecord;
   },
 
-  effect(f: ZodType<any>): f is ZodEffects<any> {
-    return f instanceof ZodEffects;
+  effect(f: ZodType<any>): f is ZodTransform<any> {
+    return f instanceof ZodTransform;
   },
 };
