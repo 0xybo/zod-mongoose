@@ -178,7 +178,7 @@ function parseField<T>(
   }
 
   if (zmAssert.def(field)) {
-    return parseField(field._def.innerType, required, field._def.defaultValue);
+    return parseField(field._def.innerType, required, () => field._def.defaultValue);
   }
 
   if (zmAssert.optional(field)) {
@@ -210,16 +210,39 @@ function parseField<T>(
     );
   }
 
+  if (zmAssert.pipe(field)) {
+    // ZodPipe represents both preprocess and transform in zod v4
+    // We want to parse the output type (field._def.out)
+    return parseField((field._def as any).out, required, def, refinement);
+  }
+
   if (zmAssert.effect(field)) {
     const effect = field._def.effect;
 
+    // Extract unique and sparse properties from the original field if it exists
+    const originalField = field._def.schema;
+    const unique = originalField && (originalField as any).__zm_unique || false;
+    const sparse = originalField && (originalField as any).__zm_sparse || false;
+
     if (effect.type === "refinement") {
       const validation = (<any>effect).__zm_validation as zm.EffectValidator<T>;
-      return parseField(field._def.schema, required, def, validation);
+      
+      // Parse the inner type and then apply unique/sparse if needed
+      const parsed = parseField(originalField, required, def, validation);
+      if (parsed && typeof parsed === 'object' && 'type' in parsed) {
+        (parsed as any).unique = unique;
+        (parsed as any).sparse = sparse;
+      }
+      return parsed;
     }
 
     if (effect.type === "preprocess" || effect.type === "transform") {
-      return parseField(field._def.schema, required, def, refinement);
+      const parsed = parseField(originalField, required, def, refinement);
+      if (parsed && typeof parsed === 'object' && 'type' in parsed) {
+        (parsed as any).unique = unique;
+        (parsed as any).sparse = sparse;
+      }
+      return parsed;
     }
   }
 

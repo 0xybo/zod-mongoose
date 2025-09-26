@@ -117,6 +117,7 @@ export function extendZod(z_0: typeof z) {
     Map: z_0.ZodMap,
     Record: z_0.ZodRecord,
     Effects: z_0.ZodTransform,
+    Pipe: z_0.ZodPipe,
   };
 
   for (const [key, value] of Object.entries(TypesMap)) {

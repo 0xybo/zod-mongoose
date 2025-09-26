@@ -11,6 +11,7 @@ import type {
   ZodNumber,
   ZodObject,
   ZodOptional,
+  ZodPipe,
   ZodRecord,
   ZodString,
   ZodType,
@@ -32,4 +33,5 @@ export interface IAsserts {
   any(f: ZodType<any>): f is ZodAny;
   mapOrRecord(f: ZodType<any>): f is ZodMap<any> | ZodRecord<any>;
   effect(f: ZodType<any>): f is ZodTransform<any>;
+  pipe(f: ZodType<any>): f is ZodPipe<any, any>;
 }

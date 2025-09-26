@@ -11,6 +11,7 @@ import type {
   ZodNumber,
   ZodObject,
   ZodOptional,
+  ZodPipe,
   ZodRecord,
   ZodString,
   ZodType,
@@ -80,5 +81,9 @@ export const zmAssert: IAsserts = {
 
   effect(f: ZodType<any>): f is ZodTransform<any> {
     return f?.constructor?.name === "ZodTransform";
+  },
+
+  pipe(f: ZodType<any>): f is ZodPipe<any, any> {
+    return f?.constructor?.name === "ZodPipe";
   },
 };
