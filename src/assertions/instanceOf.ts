@@ -4,13 +4,14 @@ import {
   ZodBoolean,
   ZodDate,
   ZodDefault,
-  ZodEffects,
+  ZodTransform,
   ZodEnum,
   ZodMap,
   ZodNullable,
   ZodNumber,
   ZodObject,
   ZodOptional,
+  ZodPipe,
   ZodRecord,
   ZodString,
   type ZodType,
@@ -78,7 +79,11 @@ export const zmAssert: IAsserts = {
     return f instanceof ZodMap || f instanceof ZodRecord;
   },
 
-  effect(f: ZodType<any>): f is ZodEffects<any> {
-    return f instanceof ZodEffects;
+  effect(f: ZodType<any>): f is ZodTransform<any> {
+    return f instanceof ZodTransform;
+  },
+
+  pipe(f: ZodType<any>): f is ZodPipe<any, any> {
+    return f instanceof ZodPipe;
   },
 };

@@ -81,6 +81,19 @@ export function zodSchemaRaw<T extends ZodRawShape>(schema: ZodObject<T>): zm._S
 }
 
 // Helpers
+// Helper function to extract validation from zod v4 checks array
+function extractValidationFromChecks(checks: any[]): zm.EffectValidator<any> | null {
+  if (!checks || checks.length === 0) return null;
+  
+  for (const check of checks) {
+    if (check._def && check._def.type === 'custom' && check._def.__zm_validation) {
+      return check._def.__zm_validation;
+    }
+  }
+  
+  return null;
+}
+
 function parseObject<T extends ZodRawShape>(obj: ZodObject<T>): zm._Schema<T> {
   const object: any = {};
   for (const [key, field] of Object.entries(obj.shape)) {
@@ -126,12 +139,16 @@ function parseField<T>(
   if (zmAssert.number(field)) {
     const isUnique = field.__zm_unique ?? false;
     const isSparse = field.__zm_sparse ?? false;
+    
+    // Extract refinement validation from checks in zod v4
+    const validation = extractValidationFromChecks(field._def.checks);
+    
     return parseNumber(
       field,
       required,
       def as zm.mDefault<number>,
       isUnique,
-      refinement as zm.EffectValidator<number>,
+      validation || (refinement as zm.EffectValidator<number>),
       isSparse,
     );
   }
@@ -139,18 +156,22 @@ function parseField<T>(
   if (zmAssert.string(field)) {
     const isUnique = field.__zm_unique ?? false;
     const isSparse = field.__zm_sparse ?? false;
+    
+    // Extract refinement validation from checks in zod v4
+    const validation = extractValidationFromChecks(field._def.checks);
+    
     return parseString(
       field,
       required,
       def as zm.mDefault<string>,
       isUnique,
-      refinement as zm.EffectValidator<string>,
+      validation || (refinement as zm.EffectValidator<string>),
       isSparse,
     );
   }
 
   if (zmAssert.enumerable(field)) {
-    return parseEnum(Object.keys(field.Values), required, def as zm.mDefault<string>);
+    return parseEnum((field as any).options, required, def as zm.mDefault<string>);
   }
 
   if (zmAssert.boolean(field)) {
@@ -160,25 +181,36 @@ function parseField<T>(
   if (zmAssert.date(field)) {
     const isUnique = field.__zm_unique ?? false;
     const isSparse = field.__zm_sparse ?? false;
+    
+    // Extract refinement validation from checks in zod v4
+    const validation = extractValidationFromChecks(field._def.checks);
+    
     return parseDate(
       required,
       def as zm.mDefault<Date>,
-      refinement as zm.EffectValidator<Date>,
+      validation || (refinement as zm.EffectValidator<Date>),
       isUnique,
       isSparse,
     );
   }
 
   if (zmAssert.array(field)) {
+    // Extract validation from the array element if it has checks
+    let elementValidation = null;
+    if (field.element && field.element._def && field.element._def.checks) {
+      elementValidation = extractValidationFromChecks(field.element._def.checks);
+    }
+    
     return parseArray(
       required,
       field.element,
       def as zm.mDefault<T extends Array<infer K> ? K[] : never>,
+      elementValidation,
     );
   }
 
   if (zmAssert.def(field)) {
-    return parseField(field._def.innerType, required, field._def.defaultValue);
+    return parseField(field._def.innerType, required, () => field._def.defaultValue);
   }
 
   if (zmAssert.optional(field)) {
@@ -202,28 +234,47 @@ function parseField<T>(
   }
 
   if (zmAssert.mapOrRecord(field)) {
+    const mapField = field as any;
     return parseMap(
       required,
-      field.valueSchema,
-      def as zm.mDefault<
-        Map<
-          zm.UnwrapZodType<typeof field.keySchema>,
-          zm.UnwrapZodType<typeof field.valueSchema>
-        >
-      >,
+      mapField.valueType,
+      def as zm.mDefault<Map<any, any>>,
     );
+  }
+
+  if (zmAssert.pipe(field)) {
+    // ZodPipe represents both preprocess and transform in zod v4
+    // We want to parse the output type (field._def.out)
+    return parseField((field._def as any).out, required, def, refinement);
   }
 
   if (zmAssert.effect(field)) {
     const effect = field._def.effect;
 
+    // Extract unique and sparse properties from the original field if it exists
+    const originalField = field._def.schema;
+    const unique = originalField && (originalField as any).__zm_unique || false;
+    const sparse = originalField && (originalField as any).__zm_sparse || false;
+
     if (effect.type === "refinement") {
       const validation = (<any>effect).__zm_validation as zm.EffectValidator<T>;
-      return parseField(field._def.schema, required, def, validation);
+      
+      // Parse the inner type and then apply unique/sparse if needed
+      const parsed = parseField(originalField, required, def, validation);
+      if (parsed && typeof parsed === 'object' && 'type' in parsed) {
+        (parsed as any).unique = unique;
+        (parsed as any).sparse = sparse;
+      }
+      return parsed;
     }
 
     if (effect.type === "preprocess" || effect.type === "transform") {
-      return parseField(field._def.schema, required, def, refinement);
+      const parsed = parseField(originalField, required, def, refinement);
+      if (parsed && typeof parsed === 'object' && 'type' in parsed) {
+        (parsed as any).unique = unique;
+        (parsed as any).sparse = sparse;
+      }
+      return parsed;
     }
   }
 
@@ -340,8 +391,9 @@ function parseArray<T>(
   required = true,
   element: ZodType<T>,
   def?: zm.mDefault<T[]>,
+  elementValidation?: zm.EffectValidator<T> | null,
 ): zm.mArray<T> {
-  const innerType = parseField(element);
+  const innerType = parseField(element, true, undefined, elementValidation || undefined);
   if (!innerType) throw new Error("Unsupported array type");
   return {
     type: [innerType as zm._Field<T>],

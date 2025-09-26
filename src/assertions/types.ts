@@ -4,13 +4,14 @@ import type {
   ZodBoolean,
   ZodDate,
   ZodDefault,
-  ZodEffects,
+  ZodTransform,
   ZodEnum,
   ZodMap,
   ZodNullable,
   ZodNumber,
   ZodObject,
   ZodOptional,
+  ZodPipe,
   ZodRecord,
   ZodString,
   ZodType,
@@ -31,5 +32,6 @@ export interface IAsserts {
   union(f: ZodType<any>): f is ZodUnion<any>;
   any(f: ZodType<any>): f is ZodAny;
   mapOrRecord(f: ZodType<any>): f is ZodMap<any> | ZodRecord<any>;
-  effect(f: ZodType<any>): f is ZodEffects<any>;
+  effect(f: ZodType<any>): f is ZodTransform<any>;
+  pipe(f: ZodType<any>): f is ZodPipe<any, any>;
 }
